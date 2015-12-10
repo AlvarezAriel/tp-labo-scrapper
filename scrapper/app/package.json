@@ -1,0 +1,15 @@
+{
+  "name": "osmoscrapper",
+  "version": "0.0.1",
+  "dependencies": {
+    "glob": "^6.0.1",
+    "gm": "^1.21.1",
+    "libxmljs": "0.15.0",
+    "lodash": "^3.10.1",
+    "needle": "0.10.0",
+    "request": "^2.67.0",
+    "superagent-proxy": "^1.0.0",
+    "x-ray": "^2.0.2",
+    "express": "^4.13.3"
+  }
+}

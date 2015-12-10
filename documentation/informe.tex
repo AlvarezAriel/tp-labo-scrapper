@@ -1,0 +1,305 @@
+\documentclass[12pt]{article}
+\usepackage[a4paper, total={6in, 8in}]{geometry}
+\geometry{ paperwidth=720pt, left=40pt, top=40pt, marginparsep=20pt}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{listings}
+\usepackage{minted}
+\usepackage{graphicx}
+
+
+\topmargin 0.0cm
+\oddsidemargin 0.2cm
+\textwidth 16cm 
+\textheight 21cm
+\footskip 1.0cm
+
+
+%The next command sets up an environment for the abstract to your paper.
+
+\newenvironment{sciabstract}{%
+\begin{quote} \bf}
+{\end{quote}}
+
+
+%%%%%%%%%%%%%%%%%     TITLE     %%%%%%%%%%%%%%%%
+
+
+\title{
+\includegraphics[width=\textwidth,height=\textheight,keepaspectratio]{logo-unq.jpg}\\[1cm]
+Configuración de un servicio de transformación de información no estructurada a formato JSON sobre un servidor Debian
+} 
+
+\author
+{Ariel Alvarez\\
+\\
+\normalsize{Universidad Nacional de Quilmes, Laboratorio de Sistemas Operativos y Redes}
+}
+
+
+
+
+%%%%%%%%%%%%%%%%% END OF PREAMBLE %%%%%%%%%%%%%%%%
+
+
+
+\begin{document} 
+
+% Double-space the manuscript.
+
+\baselineskip24pt
+
+% Make the title.
+\maketitle 
+
+\begin{sciabstract}
+  Este trabajo busca conformar una guía paso a paso de cómo configurar un servicio en \texttt{NodeJS} que se ejecute de manera periódica sobre un servidor \texttt{Debian}, y analice determinados sitios web extrayendo información y generando archivos con formato \texttt{JSON} a partir de los datos procesados.
+\end{sciabstract}
+
+
+\section{Introducción}
+
+La mayor parte de la información en internet se encuentra expuesta en formatos no estructurados, es decir, dentro de código HTML sin una estructura genérica o estandarizada. Cuando ciertos sistemas requieren acceder a esta información, es necesario primero organizarla en una estructura más sencilla de manejar.
+
+Para esto usaremos un Scrapper, una herramienta que se encarga de procesar sitios a partir de patrones predefinidos, extrayendo información y guardándola en un formato estándar.
+
+En este caso, se utilizará un script escrito en Javascript que será ejecutado periódicamente por NodeJS. El resultado de ese script es un archivo con formato JSON que se guardará en un directorio compartido con una instancia de un Docker corriendo Nginx, la cual servirá el arhcivo por su puerto 80.
+
+De esta manera, el principal acceso público queda aislado en una instancia de docker con la última versión de Nginx, eliminando varios posibles problemas de seguridad.
+
+\section{Configuración del Entorno}
+
+\subsection{Debian}
+
+Como sistema operativo host se va a usar \textbf{Debian Jessie}, pero puede extrapolarse a cualquier sistema operativo que soporte \textit{NodeJS} y \textit{Docker} .
+
+\subsection{NodeJS}
+
+Instalamos NodeJS:
+
+
+\begin{minted}[frame=single,framesep=10pt]{bash}
+curl -sL https://deb.nodesource.com/setup_0.12 | sudo bash -
+sudo apt-get install -y nodejs
+\end{minted}
+
+Cabe aclarar que, siendo un script que se descarga desde el exterior, es siempre recomendable leerlo antes de ejecutarlo.
+
+\subsection{Paquete X-Ray para NodeJS }
+
+La librería que utilizaremos para programar el Scrapper se llama X-Ray. En lugar de isntalarla globalmente, la agregaremos como dependencia a nuestro proyecto.
+Para esto creamos un archivo \textbf{package.json} y agregamos las dependencias necesarias:
+
+\begin{minted}[frame=single,framesep=10pt]{javascript}
+{
+  "name": "eardrop",
+  "version": "0.0.1",
+  "dependencies": {
+    "glob": "^6.0.1",
+    "gm": "^1.21.1",
+    "libxmljs": "0.15.0",
+    "lodash": "^3.10.1",
+    "needle": "0.10.0",
+    "request": "^2.67.0",
+    "superagent-proxy": "^1.0.0",
+    "x-ray": "^2.0.2"
+  }
+}
+\end{minted}
+
+Ademaś de \textit{X-Ray}, tenemos otras dependencias como: \textit{superagent-proxy} nos permite configurar proxys para las requests que realicemos (en caso de que queramos evitar que la IP de nuestro servidor de scrapping sea bloqueada al hacer muchos requests consecutivos). \textit{request} nos permite reqlizar requests HTTP planas, con lo cual resulta útil para descargar contenidos tales como imágenes.
+
+Para instalarlas, debemos correr el siguiente comando dentro del directorio donde se encuentra \textbf{package.json}:
+
+\begin{minted}[frame=single,framesep=10pt]{bash}
+npm install
+\end{minted}
+
+Esto instalará las dependencias de manera local al proyecto, evitando posbiles problemas de versiones con librerías globales.
+
+\subsection{Docker}
+
+Instalamos Docker e iniciamos el daemon:
+
+\begin{minted}[frame=single,framesep=10pt]{bash}
+sudo apt-get install docker-engine
+sudo service docker start
+\end{minted}
+
+
+\section{Programación del scrapper}
+
+En este ejemplo vamos a conseguir un listado de las noticias destacadas que aparecen en el portal de la UNQ:
+
+\begin{minted}[frame=single,framesep=10pt]{javascript}
+x('http://www.unq.edu.ar/noticias/', 'aside#listado',{
+    noticias:x('li', [
+        {
+            date:'div.fecha',
+            title:'h3 a',
+            description:'div.bajada a',
+            thumbnail:'figure a img@src'
+        }
+    ])
+}).write('../out/posts.json');
+\end{minted}
+
+\textit{X-Ray} hace un request a \textbf{http://www.unq.edu.ar/noticias/} y se trae el HTML correspondiente a dicha URL. Luego lo recorre utilizando las reglas explicitadas:  obtener el contenido del tag \textit{aside} cuyo id es \textit{listado} y luego, por cada elemento \textit{li} que encuentre, crear objetos noticia rellenando sus atributos.
+
+El código completo, que incluye imports para descargar imágenes, transformar su formato, utilizar proxy, etc, es:
+
+\begin{minted}[frame=single,framesep=10pt]{javascript}
+var
+    Xray = require('x-ray'),
+    proxy = require('./proxy-driver'),
+    fs = require('fs'),
+    glob = require("glob"),
+    request = require('request'),
+    gm = require('gm').subClass({imageMagick: true}),
+    _ = require('lodash');
+
+var x = Xray();
+
+x.delay(300, 500);
+x.throttle(1, 200);
+//x.driver(proxy());
+
+x('http://www.unq.edu.ar/noticias/', 'aside#listado',{
+    noticias:x('li', [
+        {
+            date:'div.fecha',
+            title:'h3 a',
+            description:'div.bajada a',
+            thumbnail:'figure a img@src'
+        }
+    ])
+}).write('../out/posts.json');
+\end{minted}
+
+\subsection{Generando un archivo JSON}
+
+Nótese que la última línea de nuestro script escribe los resultados en un archivo \textbf{posts.json} dentro del directorio \textbf{out}.
+
+Este directorio será luego compartido con la instancia de docker, que será la encargada de servirlo por HTTP.
+
+\subsection{Usando proxy}
+
+Para utilizar un proxy, es posible extender el cliente HTTP que usa el script para soportar un driver customizado, por ejemplo:
+
+\begin{minted}[frame=single,framesep=10pt]{javascript}
+var superagent = require('superagent');
+
+// extend with Request#proxy()
+require('superagent-proxy')(superagent);
+/**
+ * Export `driver`
+ */
+
+module.exports = driver;
+
+/**
+ * Custom proxy HTTP driver
+ *
+ * @param {Object} opts
+ * @return {Function}
+ */
+
+function driver(opts) {
+    var agent = superagent.agent(opts || {});
+    var proxy = 'http://104.42.106.203:8080';
+
+    return function http_driver(ctx, fn) {
+        agent
+            .get(ctx.url)
+            .proxy(proxy)
+            .set(ctx.headers)
+            .end(function(err, res) {
+                if (err && !err.status) return fn(err);
+
+                ctx.status = res.status;
+                ctx.set(res.headers);
+
+                ctx.body = 'application/json' == ctx.type
+                    ? res.body
+                    : res.text;
+
+                // update the URL if there were redirects
+                ctx.url = res.redirects.length
+                    ? res.redirects.pop()
+                    : ctx.url;
+
+                return fn(null, ctx)
+            })
+    }
+}
+\end{minted}
+
+Nos permite inyectar un proxy público, que en el ejemplo se encuentra harcodeado con la IP \textit{104.42.106.203}
+
+\section{Servidor HTTP estático usando Nginx dockerizado}
+
+Para servir el archivo JSON generado, vamos a utilizar una instancia de docker conteniendo un servidor Nginx. Al correr la instancia, se le monta un directorio del sistema Host, de tal manera que pueda interactuar con archivos generados externamente.
+
+Primero obtenemos la imagen con Nginx:
+
+\begin{minted}[frame=single,framesep=10pt]{bash}
+docker pull nginx
+\end{minted}
+
+Luego si lo que queremos hacer es únicamente servir contenido estático, como es nuestro caso, alcanza con correr el contenedor usando:
+
+
+\begin{minted}[frame=single,framesep=10pt]{bash}
+docker run 
+          --name static-http-server 
+          -v ./out/:/usr/share/nginx/html:ro 
+          -d nginx
+\end{minted}
+
+Para evitar escribir manualmente este comando cada vez que se quiera iniciar la instancia del servidor, creamos un archivo \textbf{start.sh} que lo contenga, y le damos permiso de ejecución
+
+
+\subsection{Configurando Cron jobs}
+
+Dependiendo la la velocidad de cambio del contenido que se desee escrappear, y la necesidad de contenido actualizado procesado, pueden configurarse distintas frecuencias. En nuestro ejemplo vamos a usar una frecuencia diaria.
+El primer paso es escribir un script que ejecute nuestro programa, alcanza con:
+
+\begin{minted}[frame=single,framesep=10pt]{bash}
+#!/bin/bash
+node /path/to/script/eardrop.js
+\end{minted}
+
+Llamado \textbf{scrapper}, dándole los permisos de ejecución apropiados.
+Este archivo luego se mueve al directorio de sistema \textbf{/etc/cron.daily}. Diariamente, el daemon Cron ejecuta todos los scripts que encuentra en este directorio. 
+
+
+\section{Conclusión}
+
+Vimos entonces cómo es posible ejecutar de manera periódica un script que tome información de sitios y la guarde en archivos json, y cómo estos archivos JSON pueden ser servidos utilizando un servidor HTTP. Para simplificar la configuración del servidor, se hizo uso de Docker, el cual nos permitió tener un entorno actualizado y fácilmente actualizable con un servidor Nginx instalado; de manera tal que los usuarios del servicio accederán al sistema dentro del contenedor, reduciendo riesgos de seguridad.
+
+Una mejora posible a esta implementación es encapsular el ambiente NodeJS también dentro de un docker, y utilizar el directorio compartido como usa suerte de pipe entre ambos. Esto implicaría que la configuración del CRON también puede ser versionable dentro de Docker, sin impactar en la configuración del sistema Host.
+
+\clearpage
+
+
+\end{document}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

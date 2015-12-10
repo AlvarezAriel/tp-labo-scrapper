@@ -1,0 +1,17 @@
+*/app/node_modules
+*/out/*
+
+*.swp
+
+# Project files for Gummi editor
+*.gummi
+*.*~
+*.bbl
+*.blg
+*.log
+*.gz
+*.fdb_latexmk
+*.fls
+*.aux
+*-blx.bib
+*.run.xml
